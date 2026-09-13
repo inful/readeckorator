@@ -23,6 +23,7 @@ package classifier
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/inful/readeckorator/internal/labels"
@@ -42,6 +43,11 @@ type ClassifierConfig struct {
 	MaxInputChars        int
 }
 
+// ErrNoPipeline is returned by New when any required dependency
+// is missing. Callers can use errors.Is to surface a clearer
+// "check your config" message.
+var ErrNoPipeline = errors.New("classifier: pipeline dependencies incomplete")
+
 // PipelineConfig wires up all four collaborators.
 type PipelineConfig struct {
 	Readeck    *readeck.Client
@@ -57,13 +63,14 @@ type Pipeline struct {
 	cfg PipelineConfig
 }
 
-// New constructs a Pipeline. Returns nil when any required field
-// is missing — callers must check.
-func New(cfg PipelineConfig) *Pipeline {
+// New constructs a Pipeline. Returns (nil, ErrNoPipeline) when any
+// required field is missing so callers can distinguish "config
+// problem" from a successful zero-value.
+func New(cfg PipelineConfig) (*Pipeline, error) {
 	if cfg.Readeck == nil || cfg.LLM == nil || cfg.Store == nil || cfg.Labels == nil {
-		return nil
+		return nil, ErrNoPipeline
 	}
-	return &Pipeline{cfg: cfg}
+	return &Pipeline{cfg: cfg}, nil
 }
 
 // Result is what Classify returns. Skipped/SkipReason describe

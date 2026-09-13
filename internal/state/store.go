@@ -146,8 +146,6 @@ type ProcessedDetail struct {
 	LLMModel      string
 	Confidence    float64
 }
-
-// ProcessedDetail returns the full record for bookmarkID, or
 // ErrNotFound wrapped in a more specific error if no such bookmark
 // has been classified.
 func (s *Store) ProcessedDetail(ctx context.Context, bookmarkID string) (ProcessedDetail, error) {
@@ -176,6 +174,30 @@ func (s *Store) ProcessedDetail(ctx context.Context, bookmarkID string) (Process
 		LLMModel:      row.LlmModel,
 		Confidence:    row.Confidence,
 	}, nil
+}
+
+// DeleteProcessed removes the processed_bookmarks row for
+// bookmarkID. The classify subcommand uses this to force a
+// re-classification of a specific bookmark. Returns nil if the
+// row didn't exist (idempotent).
+func (s *Store) DeleteProcessed(ctx context.Context, bookmarkID string) error {
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM processed_bookmarks WHERE bookmark_id = ?`, bookmarkID,
+	); err != nil {
+		return fmt.Errorf("delete processed %s: %w", bookmarkID, err)
+	}
+	return nil
+}
+
+// WipeProcessed drops every row in processed_bookmarks. Used by
+// `backfill --force` to make the next pass re-classify everything.
+// The label_inventory is preserved — we don't lose the label
+// usage counts just because we're starting fresh.
+func (s *Store) WipeProcessed(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM processed_bookmarks`); err != nil {
+		return fmt.Errorf("wipe processed: %w", err)
+	}
+	return nil
 }
 
 // MarkProcessed records that bookmarkID has been classified with

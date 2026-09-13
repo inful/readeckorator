@@ -95,7 +95,7 @@ func newFixture(t *testing.T) *fixture {
 
 	mgr := labels.New(s, rc)
 
-	f.pipeline = New(PipelineConfig{
+	f.pipeline, err = New(PipelineConfig{
 		Readeck: rc,
 		LLM:     l,
 		Store:   s,
@@ -108,6 +108,9 @@ func newFixture(t *testing.T) *fixture {
 			MaxInputChars:        48000,
 		},
 	})
+	if err != nil {
+		t.Fatalf("classifier.New: %v", err)
+	}
 	t.Cleanup(func() {
 		for _, c := range f.cleanup {
 			c()

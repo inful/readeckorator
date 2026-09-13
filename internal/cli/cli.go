@@ -15,10 +15,18 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
+	"github.com/inful/readeckorator/internal/classifier"
+	"github.com/inful/readeckorator/internal/collections"
 	"github.com/inful/readeckorator/internal/config"
+	"github.com/inful/readeckorator/internal/runner"
 )
 
 // version is set at build time via -ldflags "-X github.com/inful/readeckorator/internal/cli.version=v1.2.3".
@@ -122,32 +130,81 @@ type VersionCmd struct{}
 // exist so kong can dispatch via kongCtx.Run() today.
 
 func (r *RunCmd) Run(c *CLI, logger *slog.Logger) error {
-	logger.Info("run: not yet implemented",
-		slog.Int("pages", r.Pages),
-	)
-	return nil
+	app, err := buildApp(c, logger)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = app.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	_, err = app.Once(ctx, logger, r.Pages)
+	return err
 }
 
 func (s *ServeCmd) Run(c *CLI, logger *slog.Logger) error {
-	logger.Info("serve: not yet implemented",
-		slog.Duration("interval", s.Interval),
-		slog.Duration("jitter", s.Jitter),
-	)
-	return nil
+	app, err := buildApp(c, logger)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = app.Close() }()
+
+	ctx, cancel := signalCtx(context.Background())
+	defer cancel()
+
+	d := runner.NewDaemon(app, logger, s.Interval, s.Jitter, 1)
+	return d.Run(ctx)
 }
 
 func (k *ClassifyCmd) Run(c *CLI, logger *slog.Logger) error {
-	logger.Info("classify: not yet implemented",
-		slog.String("id", k.ID),
+	app, err := buildApp(c, logger)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = app.Close() }()
+
+	// Force-classify: clear any prior "processed" row so the
+	// pipeline re-runs end to end on this bookmark.
+	if err := app.Store.DeleteProcessed(context.Background(), k.ID); err != nil {
+		logger.Warn("could not clear prior classification",
+			slog.String("bookmark_id", k.ID),
+			slog.String("err", err.Error()),
+		)
+	}
+
+	result, err := app.Pipeline.Classify(context.Background(), k.ID)
+	if err != nil {
+		return err
+	}
+	logger.Info("classify complete",
+		slog.String("bookmark_id", k.ID),
+		slog.Bool("skipped", result.Skipped),
+		slog.String("skip_reason", result.SkipReason),
+		slog.Any("applied_labels", result.AppliedLabels),
+		slog.Float64("confidence", result.Confidence),
 	)
 	return nil
 }
 
 func (b *BackfillCmd) Run(c *CLI, logger *slog.Logger) error {
-	logger.Info("backfill: not yet implemented",
-		slog.Bool("force", b.Force),
-	)
-	return nil
+	app, err := buildApp(c, logger)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = app.Close() }()
+
+	if b.Force {
+		logger.Warn("backfill --force: re-classifying every bookmark (this may take a while)")
+		if err := app.Store.WipeProcessed(context.Background()); err != nil {
+			return err
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, err = app.Once(ctx, logger, 100)
+	return err
 }
 
 func (l *LabelsCmd) Run(c *CLI, logger *slog.Logger) error {
@@ -158,13 +215,53 @@ func (l *LabelsCmd) Run(c *CLI, logger *slog.Logger) error {
 }
 
 func (l *LabelsListCmd) Run(c *CLI, logger *slog.Logger) error {
-	logger.Info("labels list: not yet implemented")
+	app, err := buildApp(c, logger)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = app.Close() }()
+
+	stats, err := app.Store.ListLabels(context.Background())
+	if err != nil {
+		return err
+	}
+	for _, s := range stats {
+		logger.Info("label",
+			slog.String("name", s.Name),
+			slog.Int("use_count", s.UseCount),
+		)
+	}
 	return nil
 }
 
 func (l *LabelsPruneCmd) Run(c *CLI, logger *slog.Logger) error {
-	logger.Info("labels prune: not yet implemented",
-		slog.Bool("prune_dry_run", l.PruneDryRun),
+	// Read the Readeck inventory and find labels with count==0.
+	app, err := buildApp(c, logger)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = app.Close() }()
+
+	labels, err := app.Readeck.ListLabels(context.Background())
+	if err != nil {
+		return err
+	}
+	var toDelete []string
+	for _, l := range labels {
+		if l.Count == 0 {
+			toDelete = append(toDelete, l.Name)
+		}
+	}
+	if l.PruneDryRun {
+		logger.Info("prune (dry run)",
+			slog.Int("would_delete", len(toDelete)),
+			slog.Any("labels", toDelete),
+		)
+		return nil
+	}
+	// Real delete not yet wired — see phase 10.
+	logger.Warn("real prune not yet implemented; rerun with --prune-dry-run to see candidates",
+		slog.Int("candidates", len(toDelete)),
 	)
 	return nil
 }
@@ -173,9 +270,18 @@ func (c *CollectionsCmd) Run(_ *CLI, _ *slog.Logger) error {
 	return nil
 }
 
-func (c *CollectionsSyncCmd) Run(_ *CLI, logger *slog.Logger) error {
-	logger.Info("collections sync: not yet implemented")
-	return nil
+func (c *CollectionsSyncCmd) Run(cli *CLI, logger *slog.Logger) error {
+	app, err := buildApp(cli, logger)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = app.Close() }()
+
+	groups := make([]collections.Group, 0, len(app.Cfg.Collections.Groups))
+	for _, g := range app.Cfg.Collections.Groups {
+		groups = append(groups, collections.Group{Name: g.Name, Labels: g.Labels})
+	}
+	return app.Reconciler.Reconcile(context.Background(), groups)
 }
 
 func (c *ConfigCmd) Run(_ *CLI, _ *slog.Logger) error {
@@ -199,4 +305,25 @@ func (c *ConfigValidateCmd) Run(cli *CLI, logger *slog.Logger) error {
 func (v *VersionCmd) Run(c *CLI, logger *slog.Logger) error {
 	logger.Info("version", slog.String("version", version))
 	return nil
+}
+
+// buildApp constructs an AppContext from the CLI's --config
+// flag. It logs the start line at INFO; errors short-circuit
+// with a wrapped message.
+func buildApp(c *CLI, logger *slog.Logger) (*runner.AppContext, error) {
+	app, err := runner.NewApp(context.Background(), c.Config, logger)
+	if err != nil {
+		if errors.Is(err, classifier.ErrNoPipeline) {
+			return nil, errors.New("app initialisation failed: check config")
+		}
+		return nil, err
+	}
+	return app, nil
+}
+
+// signalCtx returns a context that is cancelled on SIGINT or
+// SIGTERM. Kept here (rather than in main.go) so each subcommand
+// can wire it without depending on the os package directly.
+func signalCtx(parent context.Context) (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 }
