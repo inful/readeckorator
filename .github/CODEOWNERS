@@ -1,0 +1,6 @@
+# GitHub default CODEOWNERS.
+#
+# Owner requests are honoured for PR review requests. Until the
+# project grows more contributors, the single @inful line covers
+# every path.
+* @inful

@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Tag-triggered release. Pushing a vX.Y.Z tag runs goreleaser to
+# build multi-platform binaries, multi-arch Docker images, SBOM,
+# cosign signatures, and the GitHub release page.
+#
+# Required repository secrets / variables:
+#   GITHUB_TOKEN              (provided by Actions)
+#   GITHUB_TOKEN_RELEASE       (PAT with write:packages for ghcr.io)
+#   COSIGN_KEY                (cosign private key for signing)
+#   COSIGN_PASSWORD           (cosign key passphrase)
+#   GPG_FINGERPRINT           (for binary signatures, optional)
+#   GPG_KEY                   (base64-armored private key, optional)
+#   GPG_PASSPHRASE            (optional)
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+jobs:
+  release:
+    name: goreleaser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        if: env.GHCR_ENABLED == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN_RELEASE }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Import cosign key
+        if: env.COSIGN_ENABLED == 'true'
+        env:
+          COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          echo "$COSIGN_KEY" | base64 -d > /tmp/cosign.key
+          cosign import-key-pair --key=/tmp/cosign.key --output-key-prefix=cosign.pub
+
+      - name: Run goreleaser
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN_RELEASE: ${{ secrets.GITHUB_TOKEN_RELEASE }}
+          GPG_FINGERPRINT: ${{ secrets.GPG_FINGERPRINT }}
+          GPG_KEY: ${{ secrets.GPG_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: goreleaser release --clean
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: dist/*.sbom.*

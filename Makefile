@@ -59,6 +59,10 @@ verify: sqlc test lint ## Full gate: sqlc diff + tests + lint.
 hooks: ## Install lefthook git hooks.
 	lefthook install
 
+.PHONY: docker-build
+docker-build: ## Build the Docker image locally (tag: readeckorator:dev).
+	docker build --build-arg VERSION=dev -t readeckorator:dev .
+
 .PHONY: release
 release: ## Cut a release via goreleaser (snapshot by default).
 	goreleaser release --clean --snapshot
@@ -66,6 +70,10 @@ release: ## Cut a release via goreleaser (snapshot by default).
 .PHONY: release-local
 release-local: ## Build goreleaser artifacts locally without publishing.
 	goreleaser release --clean --snapshot --skip=publish
+
+.PHONY: goreleaser-check
+goreleaser-check: ## Validate goreleaser config without releasing.
+	goreleaser check
 
 .PHONY: clean
 clean: ## Remove build artifacts.

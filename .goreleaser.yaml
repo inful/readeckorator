@@ -1,0 +1,156 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# goreleaser configuration for readeckorator.
+#
+# Cross-compiles for the common desktop/server platforms and
+# builds multi-arch Docker images on tag pushes. The --snapshot
+# flag in `make release-local` exercises this config without
+# publishing anything.
+
+version: 2
+
+project_name: readeckorator
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: readeckorator
+    main: ./cmd/readeckorator
+    binary: readeckorator
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+      - -X main.builtBy=goreleaser
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+    formats:
+      - tar.gz
+    files:
+      - LICENSE
+      - README.md
+      - configs/readeckorator.example.yaml
+
+checksum:
+  name_template: '{{ .ProjectName }}_{{ .Version }}_checksums.txt'
+  algorithm: sha256
+
+# GPG signing requires a configured key. CI sets GPG_FINGERPRINT;
+# local snapshot builds skip this block entirely.
+signs: []
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "^build:"
+      - "^style:"
+
+# GitHub releases (skipped when --snapshot).
+release:
+  github:
+    owner: inful
+    name: readeckorator
+
+# Multi-arch Docker images.
+# Uses Docker buildx under the hood. Each image is pushed to
+# ghcr.io/inful/readeckorator and the manifest list is tagged so
+# `docker pull ghcr.io/inful/readeckorator:latest` resolves to the
+# right arch automatically.
+dockers:
+  - id: readeckorator-image
+    use: buildx
+    goos: linux
+    goarch: amd64
+    dockerfile: Dockerfile
+    image_templates:
+      - "ghcr.io/inful/readeckorator:{{ .Version }}"
+      - "ghcr.io/inful/readeckorator:v{{ .Major }}.{{ .Minor }}"
+      - "ghcr.io/inful/readeckorator:latest"
+    build_flag_templates:
+      - "--pull"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.description=Readeck bookmark classifier powered by an LLM"
+      - "--label=org.opencontainers.image.url=https://github.com/inful/readeckorator"
+      - "--label=org.opencontainers.image.source=https://github.com/inful/readeckorator"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .ShortCommit }}"
+      - "--label=org.opencontainers.image.created={{ .CommitTimestamp }}"
+      - "--label=org.opencontainers.image.licenses=GPL-3.0-or-later"
+
+  - id: readeckorator-arm64
+    use: buildx
+    goos: linux
+    goarch: arm64
+    dockerfile: Dockerfile
+    image_templates:
+      - "ghcr.io/inful/readeckorator:{{ .Version }}"
+      - "ghcr.io/inful/readeckorator:v{{ .Major }}.{{ .Minor }}"
+      - "ghcr.io/inful/readeckorator:latest"
+    build_flag_templates:
+      - "--pull"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.description=Readeck bookmark classifier powered by an LLM"
+      - "--label=org.opencontainers.image.url=https://github.com/inful/readeckorator"
+      - "--label=org.opencontainers.image.source=https://github.com/inful/readeckorator"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .ShortCommit }}"
+      - "--label=org.opencontainers.image.created={{ .CommitTimestamp }}"
+      - "--label=org.opencontainers.image.licenses=GPL-3.0-or-later"
+
+docker_manifests:
+  - name_template: "ghcr.io/inful/readeckorator:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/inful/readeckorator:{{ .Version }}-amd64"
+      - "ghcr.io/inful/readeckorator:{{ .Version }}-arm64"
+
+  - name_template: "ghcr.io/inful/readeckorator:v{{ .Major }}.{{ .Minor }}"
+    image_templates:
+      - "ghcr.io/inful/readeckorator:v{{ .Major }}.{{ .Minor }}-amd64"
+      - "ghcr.io/inful/readeckorator:v{{ .Major }}.{{ .Minor }}-arm64"
+
+  - name_template: "ghcr.io/inful/readeckorator:latest"
+    image_templates:
+      - "ghcr.io/inful/readeckorator:latest-amd64"
+      - "ghcr.io/inful/readeckorator:latest-arm64"
+
+# Attestations + signing for supply-chain hygiene.
+# SBOM generation requires the `syft` tool (https://github.com/anchore/syft).
+# The CI workflow installs it; locally you can skip with --skip=sbom.
+sboms:
+  - id: archive-sbom
+    artifacts: archive
+  - id: binary-sbom
+    artifacts: binary
