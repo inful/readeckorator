@@ -1,7 +1,10 @@
-# golangci-lint configuration for readeckorator.
+# SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Strict but pragmatic: catches real bugs and security issues without
-# wasting time on style nits that gofmt already handles.
+# golangci-lint v2 configuration for readeckorator.
+#
+# v2 enables all linters by default; we explicitly disable ones
+# we don't want and pin the rest. The config is checked by the
+# CI job "Run golangci-lint" before the actual lint runs.
 
 version: "2"
 
@@ -10,32 +13,32 @@ run:
   tests: true
 
 linters:
-  disable-all: true
   enable:
-    - errcheck       # unchecked errors
-    - govet          # suspicious constructs
-    - ineffassign    # unused assignments
-    - staticcheck    # bug finder
-    - unused         # dead code
-    - gosec          # security
-    - gocritic       # opinionated style + bugs
+    - errcheck                # unchecked errors
+    - govet                  # suspicious constructs
+    - ineffassign            # unused assignments
+    - staticcheck            # bug finder (includes stylecheck in v2)
+    - unused                 # dead code
+    - gosec                  # security
+    - gocritic               # opinionated style + bugs
     - gocheckcompilerdirectives # unknown //go: directives
-    - errorlint      # %w wrapping correctness
-    - bodyclose      # http body close
-    - nilerr         # returning nil after handling error
-    - nilnil         # func() (nil, nil) anti-pattern
+    - errorlint              # %w wrapping correctness
+    - bodyclose              # http body close
+    - nilerr                 # returning nil after handling error
+    - nilnil                 # func() (nil, nil) anti-pattern
 
 issues:
   max-same-issues: 0
+  # Path excludes for the Go toolchain — keeps generated files
+  # and the goreleaser dist directory out of the lint universe.
+  exclude-dirs:
+    - dist
+    - bin
   exclude-rules:
     - path: _test\.go
       linters:
         - errcheck
         - gosec
-    # Allow long test names and helper parameters.
     - path: _test\.go
       text: "function-parameter"
       linters: [gocritic]
-  exclude-dirs:
-    - dist
-    - bin
