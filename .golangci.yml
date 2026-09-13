@@ -2,9 +2,11 @@
 #
 # golangci-lint v2 configuration for readeckorator.
 #
-# v2 enables all linters by default; we explicitly disable ones
-# we don't want and pin the rest. The config is checked by the
-# CI job "Run golangci-lint" before the actual lint runs.
+# v2 enables all linters by default; we explicitly enable the
+# ones we want (and pin their comments). The v2 schema moved
+# exclusions under `linters.exclusions`:
+#   - paths:  directories or files to skip
+#   - rules:  per-linter/text/path exclusions
 
 version: "2"
 
@@ -26,19 +28,22 @@ linters:
     - bodyclose              # http body close
     - nilerr                 # returning nil after handling error
     - nilnil                 # func() (nil, nil) anti-pattern
+  exclusions:
+    # Don't lint inside the goreleaser build output or our local bin/.
+    paths:
+      - dist
+      - bin
+    # We allow errcheck/gosec to be noisy on test files (test
+    # helpers often swallow errors on purpose) and accept
+    # gocritic's "function-parameter" complaint in test args.
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+      - path: _test\.go
+        text: "function-parameter"
+        linters: [gocritic]
 
 issues:
   max-same-issues: 0
-  # Path excludes for the Go toolchain — keeps generated files
-  # and the goreleaser dist directory out of the lint universe.
-  exclude-dirs:
-    - dist
-    - bin
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - errcheck
-        - gosec
-    - path: _test\.go
-      text: "function-parameter"
-      linters: [gocritic]
