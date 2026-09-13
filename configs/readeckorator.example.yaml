@@ -1,0 +1,81 @@
+# readeckorator example config.
+#
+# Every secret-bearing field supports ${ENV_VAR} interpolation; the
+# interpolated value is what gets used at runtime. This keeps secrets
+# out of the YAML file itself.
+
+readeck:
+  # Base URL of your self-hosted Readeck instance (no trailing slash).
+  base_url: "https://readeck.example.com"
+
+  # Readeck API token (Profile → API Tokens).
+  api_token: "${READECK_API_TOKEN}"
+
+  # Per-request HTTP timeout.
+  timeout: 30s
+
+  # Maximum bookmarks fetched per page when listing.
+  page_size: 50
+
+llm:
+  # Any OpenAI-compatible endpoint. Examples:
+  #   https://api.openai.com/v1
+  #   https://openrouter.ai/api/v1
+  #   http://localhost:11434/v1          # Ollama
+  #   http://localhost:1234/v1            # LM Studio
+  #   https://your-vllm.internal/v1
+  base_url: "https://api.openai.com/v1"
+
+  api_key: "${LLM_API_KEY}"
+
+  # Model name as the endpoint knows it.
+  model: "gpt-4o-mini"
+
+  timeout: 60s
+  temperature: 0.0
+
+  # Char cap applied to the article markdown before sending to the LLM.
+  # ~4 chars per token; 48000 chars ≈ 12k tokens.
+  max_input_chars: 48000
+
+state:
+  # Path to the SQLite state DB. ~ expands to the user's home dir.
+  db_path: "~/.local/share/readeckorator/state.db"
+
+classifier:
+  # Maximum number of labels the LLM may apply to one bookmark.
+  max_labels_per_bookmark: 5
+
+  # Predictions below this confidence are recorded but not applied.
+  min_confidence: 0.5
+
+  # Tell the LLM it should prefer reusing existing labels over inventing
+  # new ones. Strongly recommended — keeps your label inventory tidy.
+  prefer_existing_labels: true
+
+  # Allow the LLM to invent new labels when none of the existing ones fit.
+  allow_new_labels: true
+
+labels:
+  # Optional bootstrap labels. The LLM may still create new ones at runtime.
+  seed: []
+
+collections:
+  # Reconcile collections on every daemon tick (and at startup).
+  reconcile_on_start: true
+
+  # Map groups of labels to Readeck collections. A collection is created
+  # (or updated) for each group, with a label filter that matches any of
+  # the labels in `labels`.
+  groups:
+    - name: "Technology"
+      labels: [technology, programming, ai, devops, llm]
+    - name: "Food"
+      labels: [cooking, recipes, restaurants]
+    - name: "News"
+      labels: [news, politics, world]
+
+runner:
+  # Used only by `readeckorator serve`.
+  interval: 5m
+  jitter: 30s

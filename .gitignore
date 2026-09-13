@@ -1,0 +1,30 @@
+# Binaries
+bin/
+dist/
+
+# Test artifacts
+coverage.out
+*.cover
+*.test
+
+# Generated sqlc code (kept in tree, but excluded from generic scans)
+# internal/state/queries.sql.go
+# internal/state/models.go
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Go workspace
+go.work
+go.work.sum
+
+# Lefthook local cache
+.lefthook/
+
+# TokenSave local index
+.tokensave/
+

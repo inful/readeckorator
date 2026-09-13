@@ -1,0 +1,49 @@
+# lefthook configuration for readeckorator.
+#
+# All gates block the commit unless they pass. No --no-verify escape
+# hatch: we want to know immediately if anything is broken.
+#
+# Conventional Commits are enforced by a pure-bash regex check on the
+# commit message — no Node, no commitlint.
+
+min_version: 1.6.0
+
+pre-commit:
+  parallel: true
+  commands:
+    test:
+      glob: "*.go"
+      run: go test ./...
+    vet:
+      glob: "*.go"
+      run: go vet ./...
+    lint:
+      glob: "*.go"
+      run: golangci-lint run
+    sqlc:
+      glob: "*.sql"
+      run: |
+        sqlc generate
+        if ! git diff --exit-code -- internal/state/queries.sql.go internal/state/models.go 2>/dev/null; then
+          echo "sqlc generated code is out of date — run 'make sqlc' and commit the result"
+          exit 1
+        fi
+
+commit-msg:
+  scripts:
+    conventional:
+      runner: bash
+      script: |
+        msg=$(cat "$1")
+        if ! echo "$msg" | grep -qE '^(feat|fix|chore|docs|test|refactor|ci|build|perf|style|revert)(\([a-z0-9_-]+\))?!?: .+'; then
+          echo ""
+          echo "commit message must follow Conventional Commits"
+          echo ""
+          echo "expected: <type>(<scope>)?: <subject>"
+          echo "allowed types: feat|fix|chore|docs|test|refactor|ci|build|perf|style|revert"
+          echo "breaking changes: append ! before the colon"
+          echo ""
+          echo "got:"
+          echo "  $msg"
+          exit 1
+        fi

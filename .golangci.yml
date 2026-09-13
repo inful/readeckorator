@@ -1,0 +1,41 @@
+# golangci-lint configuration for readeckorator.
+#
+# Strict but pragmatic: catches real bugs and security issues without
+# wasting time on style nits that gofmt already handles.
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck       # unchecked errors
+    - govet          # suspicious constructs
+    - ineffassign    # unused assignments
+    - staticcheck    # bug finder
+    - unused         # dead code
+    - gosec          # security
+    - gocritic       # opinionated style + bugs
+    - gocheckcompilerdirectives # unknown //go: directives
+    - errorlint      # %w wrapping correctness
+    - bodyclose      # http body close
+    - nilerr         # returning nil after handling error
+    - nilnil         # func() (nil, nil) anti-pattern
+
+issues:
+  max-same-issues: 0
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
+    # Allow long test names and helper parameters.
+    - path: _test\.go
+      text: "function-parameter"
+      linters: [gocritic]
+  exclude-dirs:
+    - dist
+    - bin
