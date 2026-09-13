@@ -49,8 +49,8 @@ tidy: ## Run go mod tidy.
 	$(GO) mod tidy
 
 .PHONY: sqlc
-sqlc: ## Generate sqlc Go code from SQL queries.
-	sqlc generate
+sqlc: ## Generate sqlc Go code from SQL queries (skipped until sqlc.yaml exists).
+	if [ -f sqlc.yaml ]; then sqlc generate; else echo "sqlc.yaml not configured yet — skipping"; fi
 
 .PHONY: verify
 verify: sqlc test lint ## Full gate: sqlc diff + tests + lint.
@@ -74,3 +74,4 @@ clean: ## Remove build artifacts.
 .PHONY: run
 run: build ## Build and run the one-shot classifier.
 	./$(BIN_DIR)/$(BINARY_NAME) run
+
