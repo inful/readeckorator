@@ -17,6 +17,8 @@ package cli
 import (
 	"log/slog"
 	"time"
+
+	"github.com/inful/readeckorator/internal/config"
 )
 
 // version is set at build time via -ldflags "-X github.com/inful/readeckorator/internal/cli.version=v1.2.3".
@@ -180,8 +182,17 @@ func (c *ConfigCmd) Run(_ *CLI, _ *slog.Logger) error {
 	return nil
 }
 
-func (c *ConfigValidateCmd) Run(_ *CLI, logger *slog.Logger) error {
-	logger.Info("config validate: not yet implemented")
+func (c *ConfigValidateCmd) Run(cli *CLI, logger *slog.Logger) error {
+	cfg, err := config.Load(cli.Config)
+	if err != nil {
+		return err
+	}
+	logger.Info("config validate: OK",
+		slog.String("path", cli.Config),
+		slog.String("readeck_base_url", cfg.Readeck.BaseURL),
+		slog.String("llm_model", cfg.LLM.Model),
+		slog.Int("collection_groups", len(cfg.Collections.Groups)),
+	)
 	return nil
 }
 
