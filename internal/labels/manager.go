@@ -100,27 +100,21 @@ func (m *Manager) Filter(proposed []string, allowNew bool) []string {
 // unprocessed and try again — which is fine for an additive-only
 // classifier (idempotent apply).
 //
-// Returns the Readeck error directly; the state DB is only
-// updated on success.
+// An empty labels slice is a successful "LLM said no labels" — we
+// still mark the bookmark processed so the next pass skips it
+// rather than re-prompting the LLM. The Readeck call is skipped
+// (there's nothing to add) but the state DB write happens.
 func (m *Manager) Apply(ctx context.Context, bookmarkID string, labels []string, model string, confidence float64) error {
-	if len(labels) == 0 {
-		return nil
-	}
-
-	// Normalise before sending — keeps "tech" and "TECH" from
-	// creating two labels on the Readeck side.
 	normalised := normaliseForApply(labels)
 
-	if m.client != nil {
+	if m.client != nil && len(normalised) > 0 {
 		if err := m.client.UpdateBookmarkLabels(ctx, bookmarkID, normalised, nil); err != nil {
 			return fmt.Errorf("update bookmark labels: %w", err)
 		}
 	}
 
-	// Record the bookmark and bump label inventory. We do both in
-	// separate calls; the state DB doesn't need transactional
-	// semantics here because both succeed-or-fail independently
-	// for our purposes.
+	// Always record the bookmark, even with empty labels — see
+	// comment above.
 	if err := m.store.MarkProcessed(ctx, bookmarkID, normalised, model, confidence); err != nil {
 		return fmt.Errorf("mark processed: %w", err)
 	}

@@ -12,25 +12,26 @@ import (
 // we declare here — we only model the ones this application
 // actually uses. Unknown fields are silently ignored on decode.
 type Bookmark struct {
-	ID         string   `json:"id"`
-	Href       string   `json:"href,omitempty"`
-	Created    string   `json:"created,omitempty"`
-	Updated    string   `json:"updated,omitempty"`
-	State      int      `json:"state,omitempty"`
-	Loaded     bool     `json:"loaded"`
-	URL        string   `json:"url"`
-	Title      string   `json:"title"`
-	SiteName   string   `json:"site_name,omitempty"`
-	Site       string   `json:"site,omitempty"`
-	Published  string   `json:"published,omitempty"`
-	Authors    []string `json:"authors,omitempty"`
-	Lang       string   `json:"lang,omitempty"`
-	Type       string   `json:"type,omitempty"`        // article | photo | video
-	HasArticle bool     `json:"has_article,omitempty"`
-	IsMarked   bool     `json:"is_marked,omitempty"`
-	IsArchived bool     `json:"is_archived,omitempty"`
-	Labels     []string `json:"labels"`
-	WordCount  int      `json:"word_count,omitempty"`
+	ID          string   `json:"id"`
+	Href        string   `json:"href,omitempty"`
+	Created     string   `json:"created,omitempty"`
+	Updated     string   `json:"updated,omitempty"`
+	State       int      `json:"state,omitempty"`
+	Loaded      bool     `json:"loaded"`
+	URL         string   `json:"url"`
+	Title       string   `json:"title"`
+	Description string   `json:"description,omitempty"`
+	SiteName    string   `json:"site_name,omitempty"`
+	Site        string   `json:"site,omitempty"`
+	Published   string   `json:"published,omitempty"`
+	Authors     []string `json:"authors,omitempty"`
+	Lang        string   `json:"lang,omitempty"`
+	Type        string   `json:"type,omitempty"` // article | photo | video
+	HasArticle  bool     `json:"has_article,omitempty"`
+	IsMarked    bool     `json:"is_marked,omitempty"`
+	IsArchived  bool     `json:"is_archived,omitempty"`
+	Labels      []string `json:"labels"`
+	WordCount   int      `json:"word_count,omitempty"`
 }
 
 // BookmarkListParams captures every filter the application exposes
