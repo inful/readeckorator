@@ -220,6 +220,82 @@ func TestApply_EmptyLabelsIsNoOp(t *testing.T) {
 	}
 }
 
+// TestApply_DryRunWritesNothing is the regression test for the
+// user-reported bug: --dry-run was writing to the state DB even
+// though it's supposed to be a pure preview. This polluted the
+// "what's new?" filter and caused the next non-dry-run to skip
+// already-classified bookmarks.
+func TestApply_DryRunWritesNothing(t *testing.T) {
+	stub := &readeckStub{}
+	srv := httptest.NewServer(stub.handler())
+	t.Cleanup(srv.Close)
+
+	store := newTestStore(t)
+	rc := readeck.New(srv.URL, "tok", readeck.WithHTTPClient(srv.Client()))
+	m := New(store, rc).WithDryRun(true)
+
+	err := m.Apply(context.Background(), "bm1", []string{"tech"}, "model-x", 0.9)
+	if err != nil {
+		t.Fatalf("Apply in dry-run mode: %v", err)
+	}
+
+	// No PATCH should have been sent to Readeck.
+	if got := atomic.LoadInt32(&stub.patches); got != 0 {
+		t.Errorf("dry-run PATCH count: got %d, want 0", got)
+	}
+
+	// No state DB write either.
+	processed, err := store.IsProcessed(context.Background(), "bm1")
+	if err != nil {
+		t.Fatalf("IsProcessed: %v", err)
+	}
+	if processed {
+		t.Errorf("dry-run marked bookmark processed: state DB was written when it shouldn't be")
+	}
+
+	stats, err := store.ListLabels(context.Background())
+	if err != nil {
+		t.Fatalf("ListLabels: %v", err)
+	}
+	if len(stats) != 0 {
+		t.Errorf("dry-run label inventory: got %v, want empty", stats)
+	}
+}
+
+func TestApply_DryRunCanBeToggledPerCall(t *testing.T) {
+	// Calling WithDryRun(true) then later calling Apply with the
+	// dry-run flag turned off should write normally. (The CLI flag
+	// is set once per process, but the setter is the right shape
+	// if a future caller wants per-bookmark overrides.)
+	stub := &readeckStub{}
+	srv := httptest.NewServer(stub.handler())
+	t.Cleanup(srv.Close)
+
+	store := newTestStore(t)
+	rc := readeck.New(srv.URL, "tok", readeck.WithHTTPClient(srv.Client()))
+
+	m := New(store, rc)
+	m.WithDryRun(true)
+
+	if err := m.Apply(context.Background(), "bm1", []string{"tech"}, "model-x", 0.9); err != nil {
+		t.Fatalf("first Apply: %v", err)
+	}
+	if processed, _ := store.IsProcessed(context.Background(), "bm1"); processed {
+		t.Errorf("dry-run marked bm1 processed")
+	}
+
+	m.WithDryRun(false)
+	if err := m.Apply(context.Background(), "bm1", []string{"tech"}, "model-y", 0.9); err != nil {
+		t.Fatalf("second Apply: %v", err)
+	}
+	if processed, _ := store.IsProcessed(context.Background(), "bm1"); !processed {
+		t.Errorf("real Apply should have marked bm1 processed")
+	}
+	if got := atomic.LoadInt32(&stub.patches); got != 1 {
+		t.Errorf("real Apply PATCH count: got %d, want 1", got)
+	}
+}
+
 func TestApply_RecordsInStateDB(t *testing.T) {
 	stub := &readeckStub{}
 	srv := httptest.NewServer(stub.handler())

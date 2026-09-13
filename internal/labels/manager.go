@@ -35,6 +35,7 @@ type Manager struct {
 	store     *state.Store
 	client    *readeck.Client
 	inventory []string // optional pre-loaded inventory; loaded by Inventory() otherwise
+	dryRun    bool     // when true, Apply is a complete no-op (no Readeck writes, no state DB writes)
 }
 
 // New constructs a Manager. store is required; client may be nil
@@ -42,6 +43,17 @@ type Manager struct {
 // Readeck).
 func New(store *state.Store, client *readeck.Client) *Manager {
 	return &Manager{store: store, client: client}
+}
+
+// WithDryRun toggles dry-run mode. When true, Apply becomes a
+// no-op: no Readeck PATCH, no MarkProcessed, no RecordLabel. The
+// classifier pipeline still runs and the LLM is still called —
+// dry-run means "don't write anything", not "don't read anything".
+//
+// Returns the manager for chaining.
+func (m *Manager) WithDryRun(v bool) *Manager {
+	m.dryRun = v
+	return m
 }
 
 // Filter normalises the proposed label list and, when allowNew is
@@ -104,7 +116,18 @@ func (m *Manager) Filter(proposed []string, allowNew bool) []string {
 // still mark the bookmark processed so the next pass skips it
 // rather than re-prompting the LLM. The Readeck call is skipped
 // (there's nothing to add) but the state DB write happens.
+//
+// When dry-run mode is on (WithDryRun(true)), Apply is a complete
+// no-op: nothing is written to Readeck and nothing is written to
+// the state DB. The pipeline still runs end-to-end so the caller
+// sees the classification result, but the system is left exactly
+// as it was. This is the only "preview" mode — without it, every
+// `run` invocation has permanent side effects.
 func (m *Manager) Apply(ctx context.Context, bookmarkID string, labels []string, model string, confidence float64) error {
+	if m.dryRun {
+		return nil
+	}
+
 	normalised := normaliseForApply(labels)
 
 	if m.client != nil && len(normalised) > 0 {

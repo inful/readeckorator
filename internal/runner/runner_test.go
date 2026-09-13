@@ -144,7 +144,7 @@ func buildAppFromConfig(t *testing.T, rf *fakeReadeck, lf *fakeLLM) *AppContext 
 	cfgPath := writeConfig(t, readeckSrv.URL, llmSrv.URL, dbPath)
 
 	logger := discardLogger()
-	app, err := NewApp(context.Background(), cfgPath, logger)
+	app, err := NewApp(context.Background(), cfgPath, false, logger)
 	if err != nil {
 		t.Fatalf("NewApp: %v", err)
 	}

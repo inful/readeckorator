@@ -317,10 +317,11 @@ func (v *VersionCmd) Run(_ context.Context, c *CLI, logger *slog.Logger) error {
 }
 
 // buildApp constructs an AppContext from the CLI's --config
-// flag. It logs the start line at INFO; errors short-circuit
-// with a wrapped message.
+// flag. The CLI's --dry-run flag propagates through to the
+// labels manager so preview runs don't touch Readeck or the
+// state DB.
 func buildApp(c *CLI, logger *slog.Logger) (*runner.AppContext, error) {
-	app, err := runner.NewApp(context.Background(), c.Config, logger)
+	app, err := runner.NewApp(context.Background(), c.Config, c.DryRun, logger)
 	if err != nil {
 		if errors.Is(err, classifier.ErrNoPipeline) {
 			return nil, errors.New("app initialisation failed: check config")

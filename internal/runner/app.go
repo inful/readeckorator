@@ -52,10 +52,14 @@ func (a *AppContext) Close() error {
 // NewApp builds an AppContext from the given config path.
 //
 // `dryRun` is plumbed into a logger field but does NOT short-
-// circuit any of the actual API calls — the per-component code
-// paths observe dry-run through the pipeline result and via
-// logger messages. (Phase 10 will wire full dry-run semantics.)
-func NewApp(ctx context.Context, cfgPath string, logger *slog.Logger) (*AppContext, error) {
+// NewApp builds an AppContext from a single config file path.
+// The dryRun flag propagates all the way through to the labels
+// manager: when true, Apply becomes a no-op so neither Readeck
+// nor the state DB are written. The LLM is still called, the
+// pipeline still runs end-to-end, and the per-bookmark result is
+// logged — dry-run means "don't write anything", not "don't do
+// anything".
+func NewApp(ctx context.Context, cfgPath string, dryRun bool, logger *slog.Logger) (*AppContext, error) {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return nil, err
@@ -79,7 +83,7 @@ func NewApp(ctx context.Context, cfgPath string, logger *slog.Logger) (*AppConte
 		llm.WithTimeout(cfg.LLM.Timeout),
 	)
 
-	mgr := labels.New(store, rc).WithInventory(cfg.Labels.Seed)
+	mgr := labels.New(store, rc).WithInventory(cfg.Labels.Seed).WithDryRun(dryRun)
 
 	pipe, err := classifier.New(classifier.PipelineConfig{
 		Readeck: rc,
@@ -106,6 +110,7 @@ func NewApp(ctx context.Context, cfgPath string, logger *slog.Logger) (*AppConte
 		slog.String("readeck", cfg.Readeck.BaseURL),
 		slog.String("llm_model", cfg.LLM.Model),
 		slog.String("state_db", dbPath),
+		slog.Bool("dry_run", dryRun),
 	)
 
 	return &AppContext{
