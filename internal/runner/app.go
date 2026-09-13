@@ -92,6 +92,7 @@ func NewApp(ctx context.Context, cfgPath string, logger *slog.Logger) (*AppConte
 			AllowNewLabels:       derefBool(cfg.Classifier.AllowNewLabels),
 			PreferExistingLabels: derefBool(cfg.Classifier.PreferExistingLabels),
 			MaxInputChars:        cfg.LLM.MaxInputChars,
+			Model:                cfg.LLM.Model,
 		},
 	})
 	if err != nil {

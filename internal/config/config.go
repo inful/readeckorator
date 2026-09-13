@@ -130,13 +130,21 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}
 
-	expanded, err := expandEnv(string(raw))
-	if err != nil {
+	// Parse to an AST first so we can interpolate env vars only on
+	// scalar values — never on YAML comments. Walking the raw text
+	// with a regex would treat `# ${X}` in a comment as a missing
+	// env var (regression caught by TestLoad_CommentWithEnvVarShapeIsNotInterpolated).
+	var root yaml.Node
+	if err := yaml.Unmarshal(raw, &root); err != nil {
+		return nil, fmt.Errorf("config %s: parse YAML: %w", path, err)
+	}
+
+	if err := interpolateNode(&root); err != nil {
 		return nil, fmt.Errorf("config %s: %w", path, err)
 	}
 
 	cfg := &Config{}
-	if err := yaml.Unmarshal([]byte(expanded), cfg); err != nil {
+	if err := root.Decode(cfg); err != nil {
 		return nil, fmt.Errorf("config %s: parse YAML: %w", path, err)
 	}
 
@@ -170,6 +178,42 @@ func expandEnv(s string) (string, error) {
 		return "", firstErr
 	}
 	return result, nil
+}
+
+// interpolateNode walks a yaml.Node tree and replaces ${NAME}
+// sequences inside scalar string values with the corresponding
+// environment variable. Comments, keys, and sequence indicators
+// are never touched — only the Value field of ScalarNode with
+// Kind == yaml.ScalarNode is rewritten.
+//
+// The first missing env var across the entire tree is reported
+// (consistent with the previous string-level behaviour).
+func interpolateNode(n *yaml.Node) error {
+	if n == nil {
+		return nil
+	}
+
+	// Only string scalars carry interpolable text. Other scalar
+	// kinds (ints, bools) and the special "null" token must be
+	// left alone. yaml.v3 reports unquoted strings with the DOUBLE_QUOTED
+	// or PLAIN style; we treat both as candidate text.
+	if n.Kind == yaml.ScalarNode && n.Tag == "!!str" {
+		expanded, err := expandEnv(n.Value)
+		if err != nil {
+			return err
+		}
+		n.Value = expanded
+		return nil
+	}
+
+	// For mappings and sequences, recurse into children. Any
+	// missing-env error is bubbled up.
+	for _, child := range n.Content {
+		if err := interpolateNode(child); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // applyDefaults fills in zero-valued fields with the documented

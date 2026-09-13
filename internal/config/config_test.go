@@ -166,6 +166,69 @@ llm:
 	}
 }
 
+func TestLoad_CommentWithEnvVarShapeIsNotInterpolated(t *testing.T) {
+	// The example config has a comment that documents the ${ENV_VAR}
+	// interpolation feature. We must NOT treat the comment as a
+	// value to interpolate — that's what tripped a real-world run.
+	//
+	// (This is the regression test for the user-reported failure
+	// where `go run` blew up with
+	//   "environment variable ${ENV_VAR} is not set"
+	// because the comment on the second line of the config said so.)
+	path := writeConfig(t, `
+# readeckorator example config.
+#
+# Every secret-bearing field supports ${ENV_VAR_DOC} interpolation; the
+# interpolated value is what gets used at runtime.
+
+readeck:
+  base_url: "https://readeck.example.com"
+  api_token: "literal-token"
+
+llm:
+  base_url: "https://api.example.com/v1"
+  api_key: "literal-key"
+  model: "test-model"
+
+state:
+  db_path: "/tmp/state.db"
+`)
+
+	// Should NOT fail just because ${ENV_VAR_DOC} appears in a comment.
+	if _, err := Load(path); err != nil {
+		t.Fatalf("Load: unexpected error from comment-shaped env var: %v", err)
+	}
+}
+
+func TestLoad_QuotedStringWithEnvVarShapeIsInterpolated(t *testing.T) {
+	// Quoted strings ARE real values, even if the literal text looks
+	// like a comment. Verify that interpolation still works inside
+	// them (the regression fix must not over-correct).
+	t.Setenv("INTERP_TEST_VAR", "expanded-value")
+
+	path := writeConfig(t, `
+readeck:
+  base_url: "https://readeck.example.com"
+  api_token: "literal-token"
+
+llm:
+  base_url: "https://api.example.com/v1"
+  api_key: "${INTERP_TEST_VAR}"
+  model: "test-model"
+
+state:
+  db_path: "/tmp/state.db"
+`)
+
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.LLM.APIKey != "expanded-value" {
+		t.Errorf("LLM.APIKey: got %q, want %q", got.LLM.APIKey, "expanded-value")
+	}
+}
+
 func TestLoad_MissingRequiredReadeckAPIToken(t *testing.T) {
 	path := writeConfig(t, `
 readeck:

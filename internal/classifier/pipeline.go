@@ -41,6 +41,7 @@ type ClassifierConfig struct {
 	AllowNewLabels       bool
 	PreferExistingLabels bool
 	MaxInputChars        int
+	Model                string
 }
 
 // ErrNoPipeline is returned by New when any required dependency
@@ -150,7 +151,7 @@ func (p *Pipeline) Classify(ctx context.Context, bookmarkID string) (Result, err
 	})
 
 	chatResp, err := p.cfg.LLM.Chat(ctx, llm.ChatRequest{
-		Model:       "", // caller fills in via config in a later phase
+		Model:       p.cfg.Classifier.Model,
 		Temperature: 0.0,
 		Messages: []llm.Message{
 			{Role: "system", Content: systemPrompt},

@@ -17,6 +17,7 @@ package state
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -111,15 +112,22 @@ func TestOpen_IsIdempotent(t *testing.T) {
 	}
 }
 
-func TestOpen_MissingParentDirectoryIsError(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "does", "not", "exist", "state.db")
-	_, err := Open(path)
-	if err == nil {
-		t.Fatalf("Open: expected error for missing parent dir, got nil")
+func TestOpen_AutoCreatesMissingParentDirectory(t *testing.T) {
+	// Open should create any missing parent directories so a
+	// `~/.local/share/<app>/state.db` config just works on first
+	// run. This matches the README example.
+	tmp := t.TempDir()
+	// tmp/... is removed at test end; pick a path two levels
+	// deeper than tmp.
+	deepPath := filepath.Join(tmp, "does", "not", "yet", "state.db")
+	s, err := Open(deepPath)
+	if err != nil {
+		t.Fatalf("Open: unexpected error (should have created parent dir): %v", err)
 	}
-	if !strings.Contains(err.Error(), "does/not/exist") {
-		t.Errorf("error should mention the path, got: %v", err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	if _, err := os.Stat(filepath.Dir(deepPath)); err != nil {
+		t.Errorf("parent dir should exist after Open, got: %v", err)
 	}
 }
 

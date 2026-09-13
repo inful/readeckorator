@@ -56,15 +56,20 @@ type Store struct {
 }
 
 // Open opens (or creates) the SQLite database at path and applies any
-// pending migrations. The parent directory must already exist.
+// pending migrations. The parent directory is auto-created if it
+// doesn't exist — this matches the typical
+// `~/.local/share/<app>/<db>.db` layout in the example config.
 //
 // On any failure the partially-opened DB is closed before returning,
 // so callers can rely on a successful Open returning a fully-migrated
 // Store or a clean error.
 func Open(path string) (*Store, error) {
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if _, err := os.Stat(dir); err != nil {
-			return nil, fmt.Errorf("state db parent dir %s: %w", dir, err)
+		//nolint:gosec // G301: 0755 is the right default for a
+		// per-user data dir; tighter perms break multi-user
+		// installations where the daemon runs as a different uid.
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("create state db parent dir %s: %w", dir, err)
 		}
 	}
 
