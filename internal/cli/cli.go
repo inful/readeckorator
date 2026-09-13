@@ -5,6 +5,13 @@
 // flags and subcommands; main.go wires it into kong.Parse and runs
 // the resulting Run() method.
 //
+// Subcommand Run() methods take a context.Context as their first
+// argument. The context is the same one created in main.go via
+// signal.NotifyContext, so every long-running subcommand is
+// Ctrl+C interruptible. Subcommands that don't perform I/O
+// (config validate, version, labels list) still accept a context
+// for signature uniformity — they just ignore it.
+//
 // Kong tag syntax reminders (v1.16):
 //   - items separated by ","
 //   - key='value' (single quotes for quoting)
@@ -18,9 +25,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/inful/readeckorator/internal/classifier"
@@ -125,39 +129,39 @@ type ConfigValidateCmd struct{}
 // VersionCmd prints version information and exits.
 type VersionCmd struct{}
 
-// Run methods on each subcommand struct. These are stubs in phase 1;
-// subsequent phases replace them with real implementations. They
-// exist so kong can dispatch via kongCtx.Run() today.
+// Run methods on each subcommand struct.
+//
+// Every Run takes a ctx as its first argument. main.go builds the
+// ctx via signal.NotifyContext so all long-running subcommands
+// (run, serve, classify, backfill, labels prune, collections sync)
+// are Ctrl+C interruptible.
 
-func (r *RunCmd) Run(c *CLI, logger *slog.Logger) error {
+func (r *RunCmd) Run(ctx context.Context, c *CLI, logger *slog.Logger) error {
 	app, err := buildApp(c, logger)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = app.Close() }()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	_, err = app.Once(ctx, logger, r.Pages)
-	return err
+	if err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	return nil
 }
 
-func (s *ServeCmd) Run(c *CLI, logger *slog.Logger) error {
+func (s *ServeCmd) Run(ctx context.Context, c *CLI, logger *slog.Logger) error {
 	app, err := buildApp(c, logger)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = app.Close() }()
-
-	ctx, cancel := signalCtx(context.Background())
-	defer cancel()
 
 	d := runner.NewDaemon(app, logger, s.Interval, s.Jitter, 1)
 	return d.Run(ctx)
 }
 
-func (k *ClassifyCmd) Run(c *CLI, logger *slog.Logger) error {
+func (k *ClassifyCmd) Run(ctx context.Context, c *CLI, logger *slog.Logger) error {
 	app, err := buildApp(c, logger)
 	if err != nil {
 		return err
@@ -166,15 +170,19 @@ func (k *ClassifyCmd) Run(c *CLI, logger *slog.Logger) error {
 
 	// Force-classify: clear any prior "processed" row so the
 	// pipeline re-runs end to end on this bookmark.
-	if err := app.Store.DeleteProcessed(context.Background(), k.ID); err != nil {
+	if err := app.Store.DeleteProcessed(ctx, k.ID); err != nil {
 		logger.Warn("could not clear prior classification",
 			slog.String("bookmark_id", k.ID),
 			slog.String("err", err.Error()),
 		)
 	}
 
-	result, err := app.Pipeline.Classify(context.Background(), k.ID)
+	result, err := app.Pipeline.Classify(ctx, k.ID)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			logger.Info("classify cancelled", slog.String("bookmark_id", k.ID))
+			return nil
+		}
 		return err
 	}
 	logger.Info("classify complete",
@@ -187,7 +195,7 @@ func (k *ClassifyCmd) Run(c *CLI, logger *slog.Logger) error {
 	return nil
 }
 
-func (b *BackfillCmd) Run(c *CLI, logger *slog.Logger) error {
+func (b *BackfillCmd) Run(ctx context.Context, c *CLI, logger *slog.Logger) error {
 	app, err := buildApp(c, logger)
 	if err != nil {
 		return err
@@ -196,32 +204,33 @@ func (b *BackfillCmd) Run(c *CLI, logger *slog.Logger) error {
 
 	if b.Force {
 		logger.Warn("backfill --force: re-classifying every bookmark (this may take a while)")
-		if err := app.Store.WipeProcessed(context.Background()); err != nil {
+		if err := app.Store.WipeProcessed(ctx); err != nil {
 			return err
 		}
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	_, err = app.Once(ctx, logger, 100)
-	return err
+	if err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	return nil
 }
 
-func (l *LabelsCmd) Run(c *CLI, logger *slog.Logger) error {
+func (l *LabelsCmd) Run(_ context.Context, _ *CLI, _ *slog.Logger) error {
 	// kongCtx.Run() lands here; the actual sub-subcommand (list/prune)
 	// is dispatched by the embedded cmd struct via its own Run() method
 	// when kong walks further into the tree.
 	return nil
 }
 
-func (l *LabelsListCmd) Run(c *CLI, logger *slog.Logger) error {
+func (l *LabelsListCmd) Run(ctx context.Context, c *CLI, logger *slog.Logger) error {
 	app, err := buildApp(c, logger)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = app.Close() }()
 
-	stats, err := app.Store.ListLabels(context.Background())
+	stats, err := app.Store.ListLabels(ctx)
 	if err != nil {
 		return err
 	}
@@ -234,7 +243,7 @@ func (l *LabelsListCmd) Run(c *CLI, logger *slog.Logger) error {
 	return nil
 }
 
-func (l *LabelsPruneCmd) Run(c *CLI, logger *slog.Logger) error {
+func (l *LabelsPruneCmd) Run(ctx context.Context, c *CLI, logger *slog.Logger) error {
 	// Read the Readeck inventory and find labels with count==0.
 	app, err := buildApp(c, logger)
 	if err != nil {
@@ -242,7 +251,7 @@ func (l *LabelsPruneCmd) Run(c *CLI, logger *slog.Logger) error {
 	}
 	defer func() { _ = app.Close() }()
 
-	labels, err := app.Readeck.ListLabels(context.Background())
+	labels, err := app.Readeck.ListLabels(ctx)
 	if err != nil {
 		return err
 	}
@@ -266,11 +275,11 @@ func (l *LabelsPruneCmd) Run(c *CLI, logger *slog.Logger) error {
 	return nil
 }
 
-func (c *CollectionsCmd) Run(_ *CLI, _ *slog.Logger) error {
+func (c *CollectionsCmd) Run(_ context.Context, _ *CLI, _ *slog.Logger) error {
 	return nil
 }
 
-func (c *CollectionsSyncCmd) Run(cli *CLI, logger *slog.Logger) error {
+func (c *CollectionsSyncCmd) Run(ctx context.Context, cli *CLI, logger *slog.Logger) error {
 	app, err := buildApp(cli, logger)
 	if err != nil {
 		return err
@@ -281,14 +290,14 @@ func (c *CollectionsSyncCmd) Run(cli *CLI, logger *slog.Logger) error {
 	for _, g := range app.Cfg.Collections.Groups {
 		groups = append(groups, collections.Group{Name: g.Name, Labels: g.Labels})
 	}
-	return app.Reconciler.Reconcile(context.Background(), groups)
+	return app.Reconciler.Reconcile(ctx, groups)
 }
 
-func (c *ConfigCmd) Run(_ *CLI, _ *slog.Logger) error {
+func (c *ConfigCmd) Run(_ context.Context, _ *CLI, _ *slog.Logger) error {
 	return nil
 }
 
-func (c *ConfigValidateCmd) Run(cli *CLI, logger *slog.Logger) error {
+func (c *ConfigValidateCmd) Run(_ context.Context, cli *CLI, logger *slog.Logger) error {
 	cfg, err := config.Load(cli.Config)
 	if err != nil {
 		return err
@@ -302,7 +311,7 @@ func (c *ConfigValidateCmd) Run(cli *CLI, logger *slog.Logger) error {
 	return nil
 }
 
-func (v *VersionCmd) Run(c *CLI, logger *slog.Logger) error {
+func (v *VersionCmd) Run(_ context.Context, c *CLI, logger *slog.Logger) error {
 	logger.Info("version", slog.String("version", version))
 	return nil
 }
@@ -319,11 +328,4 @@ func buildApp(c *CLI, logger *slog.Logger) (*runner.AppContext, error) {
 		return nil, err
 	}
 	return app, nil
-}
-
-// signalCtx returns a context that is cancelled on SIGINT or
-// SIGTERM. Kept here (rather than in main.go) so each subcommand
-// can wire it without depending on the os package directly.
-func signalCtx(parent context.Context) (context.Context, context.CancelFunc) {
-	return signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 }

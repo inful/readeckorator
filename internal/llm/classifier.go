@@ -27,10 +27,15 @@ type ClassificationResult struct {
 //
 // Collections names are trimmed and deduped but case is preserved —
 // they must match the names declared in config exactly.
+//
+// When the LLM response isn't valid JSON — most often because the
+// gateway returned an HTML error page or auth wall — we surface a
+// helpful hint that names the likely cause instead of a
+// cryptic json.UnmarshalSyntaxError.
 func ParseClassification(raw string) (ClassificationResult, error) {
 	var got ClassificationResult
 	if err := json.Unmarshal([]byte(raw), &got); err != nil {
-		return got, fmt.Errorf("parse classification JSON: %w", err)
+		return got, classifyParseError(raw, err)
 	}
 	got.Labels = normaliseLabels(got.Labels)
 	got.Collections = normaliseCollectionNames(got.Collections)
@@ -42,6 +47,79 @@ func ParseClassification(raw string) (ClassificationResult, error) {
 		got.Confidence = 1
 	}
 	return got, nil
+}
+
+// classifyParseError converts a raw "is this JSON?" failure into a
+// clearer diagnostic. The two cases we see in the wild are:
+//   - HTML: the gateway returned an error page (auth, rate limit,
+//     502, etc.) — usually caused by a bad API key or wrong model.
+//   - plain text: the model itself declined or refused (safety
+//     filters, output limits).
+// Anything else falls back to the raw json error.
+func classifyParseError(raw string, jsonErr error) error {
+	trimmed := strings.TrimSpace(raw)
+	preview := trimmed
+	if len(preview) > 120 {
+		preview = preview[:120] + "…"
+	}
+
+	switch {
+	case strings.HasPrefix(strings.ToLower(trimmed), "<!doctype") ||
+		strings.HasPrefix(strings.ToLower(trimmed), "<html"):
+		return fmt.Errorf(
+			"expected JSON from LLM but got an HTML page — "+
+				"check the API key, model name, and endpoint URL. "+
+				"First line: %q. Underlying error: %w",
+			firstLine(trimmed), jsonErr,
+		)
+	case strings.HasPrefix(trimmed, "<"):
+		return fmt.Errorf(
+			"expected JSON from LLM but got HTML — "+
+				"this usually means the gateway returned an error page "+
+				"(auth wall, bad key, wrong model, 5xx). Preview: %q. "+
+				"Underlying error: %w",
+			preview, jsonErr,
+		)
+	case !strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, "["):
+		return fmt.Errorf(
+			"expected JSON from LLM but got plain text — "+
+				"the model may have refused to answer or hit a safety filter. "+
+				"Preview: %q. Underlying error: %w",
+			preview, jsonErr,
+		)
+	default:
+		return fmt.Errorf("parse classification JSON: %w", jsonErr)
+	}
+}
+
+// firstLine returns the first non-empty line of s, trimmed.
+func firstLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+// normaliseLabels trims, lower-cases, and dedupes a label list.
+// Order is preserved (first occurrence wins).
+func normaliseLabels(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, raw := range in {
+		n := strings.ToLower(strings.TrimSpace(raw))
+		if n == "" {
+			continue
+		}
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		out = append(out, n)
+	}
+	return out
 }
 
 // normaliseCollectionNames trims and dedupes collection names
@@ -64,25 +142,6 @@ func normaliseCollectionNames(in []string) []string {
 	return out
 }
 
-// normaliseLabels trims, lower-cases, and dedupes a label list.
-// Order is preserved (first occurrence wins).
-func normaliseLabels(in []string) []string {
-	seen := make(map[string]struct{}, len(in))
-	out := make([]string, 0, len(in))
-	for _, raw := range in {
-		n := strings.ToLower(strings.TrimSpace(raw))
-		if n == "" {
-			continue
-		}
-		if _, ok := seen[n]; ok {
-			continue
-		}
-		seen[n] = struct{}{}
-		out = append(out, n)
-	}
-	return out
-}
-
 // CollectionGroup is a label → collection mapping from the config.
 // Used by the system prompt to tell the LLM which labels should
 // route into which collection.
@@ -95,10 +154,10 @@ type CollectionGroup struct {
 // system prompt. Kept as a struct (rather than positional args) so
 // adding a new knob doesn't break every callsite.
 type BuildSystemPromptInput struct {
-	ExistingLabels    []string
-	CollectionGroups  []CollectionGroup
-	PreferExisting    bool
-	AllowNewLabels    bool
+	ExistingLabels       []string
+	CollectionGroups     []CollectionGroup
+	PreferExisting       bool
+	AllowNewLabels       bool
 	MaxLabelsPerBookmark int
 }
 

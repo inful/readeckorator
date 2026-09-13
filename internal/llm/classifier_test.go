@@ -56,6 +56,53 @@ func TestParseClassification_InvalidJSONReturnsError(t *testing.T) {
 	}
 }
 
+func TestParseClassification_HTMLResponseGivesHelpfulHint(t *testing.T) {
+	// Real-world failure mode: the LLM gateway returns an HTML
+	// error page (auth wall, 5xx, bad model) instead of JSON.
+	// We surface a hint that names the likely cause rather than
+	// the cryptic "invalid character '<'" from json.Unmarshal.
+	html := `<!DOCTYPE html>
+<html><head><title>401 Unauthorized</title></head>
+<body><h1>401 Unauthorized</h1></body></html>`
+
+	_, err := ParseClassification(html)
+	if err == nil {
+		t.Fatalf("expected error for HTML response")
+	}
+	msg := err.Error()
+	for _, want := range []string{"HTML", "API key", "model"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error should mention %q (likely cause hint), got: %v", want, err)
+		}
+	}
+}
+
+func TestParseClassification_PlainTextResponseGivesHelpfulHint(t *testing.T) {
+	// The model may refuse to answer (safety filter, output limit)
+	// and emit prose instead of JSON.
+	_, err := ParseClassification("I'm sorry, but I can't help with that.")
+	if err == nil {
+		t.Fatalf("expected error for plain-text response")
+	}
+	if !strings.Contains(err.Error(), "plain text") &&
+		!strings.Contains(err.Error(), "refused") {
+		t.Errorf("error should mention refusal/safety, got: %v", err)
+	}
+}
+
+func TestParseClassification_TruncatedJSONShowsUnderlyingError(t *testing.T) {
+	// JSON that starts with `{` but is broken mid-way is a real
+	// parser failure (truncation, mid-stream error). We surface
+	// the underlying json error without the HTML/plain-text hint.
+	_, err := ParseClassification(`{"labels":["tech"],"confid`)
+	if err == nil {
+		t.Fatalf("expected error for truncated JSON")
+	}
+	if strings.Contains(err.Error(), "HTML") || strings.Contains(err.Error(), "plain text") {
+		t.Errorf("truncated JSON should not produce HTML/plain-text hint, got: %v", err)
+	}
+}
+
 func TestParseClassification_AcceptsEmptyArrays(t *testing.T) {
 	// LLM may legitimately return no labels if it can't classify.
 	got, err := ParseClassification(`{"labels":[],"collections":[],"confidence":0.1,"reasoning":"unclear"}`)

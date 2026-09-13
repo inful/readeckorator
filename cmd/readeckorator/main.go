@@ -20,6 +20,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -44,10 +45,20 @@ func main() {
 
 func run(args []string, stderr *os.File) int {
 	var c cli.CLI
+
+	// Build the signal-aware context BEFORE creating the kong
+	// parser, because the binding below captures it.
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
 	parser, err := kong.New(&c,
 		kong.Name(appName),
 		kong.Description("Readeck bookmark classifier powered by an OpenAI-compatible LLM."),
 		kong.Exit(func(int) {}), // never auto-exit; we handle exit codes ourselves
+		// Bind the signal-aware context so subcommand Run(ctx, ...)
+		// methods receive it. Without this binding, kong can't
+		// match the context.Context parameter.
+		kong.BindTo(ctx, (*context.Context)(nil)),
 	)
 	if err != nil {
 		// If stderr is itself broken, there's nothing useful we can do.
@@ -63,10 +74,13 @@ func run(args []string, stderr *os.File) int {
 
 	logger := newLogger(c.LogLevel, stderr)
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-
-	if err := dispatch(ctx, kongCtx, &c, logger); err != nil {
+	if err := dispatch(kongCtx, &c, logger); err != nil {
+		// Cancellation isn't a "command failed" — it's a clean exit
+		// triggered by the user. Log at info level and return 0.
+		if errors.Is(err, context.Canceled) {
+			logger.Info("command cancelled")
+			return 0
+		}
 		logger.Error("command failed", slog.String("err", err.Error()))
 		return 1
 	}
@@ -74,13 +88,9 @@ func run(args []string, stderr *os.File) int {
 }
 
 // dispatch runs the selected subcommand. Each subcommand struct has a
-// Run() method; kong calls it via kongCtx.Run(). This wrapper exists
-// so we can wire context and logger into every subcommand without
-// changing the CLI test surface.
-//
-// In phase 1, subcommand Run() methods are stubs that just log.
-// Subsequent phases fill in real behaviour.
-func dispatch(ctx context.Context, kongCtx *kong.Context, c *cli.CLI, logger *slog.Logger) error {
+// Run(ctx, *CLI, *slog.Logger) method; kong calls it via kongCtx.Run.
+// The context is injected via the kong.BindTo binding registered in run().
+func dispatch(kongCtx *kong.Context, c *cli.CLI, logger *slog.Logger) error {
 	logger.Info("starting",
 		slog.String("command", kongCtx.Command()),
 		slog.String("version", version),
