@@ -103,6 +103,62 @@ func TestParseClassification_TruncatedJSONShowsUnderlyingError(t *testing.T) {
 	}
 }
 
+func TestParseClassification_StripsThinkingTagsAndParsesJSON(t *testing.T) {
+	// Real-world failure mode: reasoning models (DeepSeek R1, o1,
+	// and apparently MiniMax-M3) prepend <think>...</think> to
+	// their final answer. The JSON we want lives AFTER the closing
+	// tag. We strip the reasoning and parse what remains.
+	withThink := `<think>The article is about Go projects. Let me list some labels.</think>
+{"labels":["go","programming"],"collections":[],"confidence":0.92,"reasoning":"matches"}`
+
+	got, err := ParseClassification(withThink)
+	if err != nil {
+		t.Fatalf("ParseClassification: %v", err)
+	}
+	if len(got.Labels) != 2 || got.Labels[0] != "go" {
+		t.Errorf("Labels: got %v", got.Labels)
+	}
+	if got.Confidence != 0.92 {
+		t.Errorf("Confidence: got %v", got.Confidence)
+	}
+}
+
+func TestParseClassification_StripsMultilineThinking(t *testing.T) {
+	// Some models emit multi-paragraph reasoning.
+	withThink := "<think>\nLine 1 of reasoning.\n\nLine 2 with\nnewlines.\n</think>\n" +
+		`{"labels":["x"],"confidence":0.5}`
+	got, err := ParseClassification(withThink)
+	if err != nil {
+		t.Fatalf("ParseClassification: %v", err)
+	}
+	if len(got.Labels) != 1 || got.Labels[0] != "x" {
+		t.Errorf("Labels: got %v", got.Labels)
+	}
+}
+
+func TestParseClassification_StripsReasoningTags(t *testing.T) {
+	// Some models use <reasoning>...</reasoning> instead of <think>.
+	withReasoning := `<reasoning>Let me think about labels.</reasoning>{"labels":["a"]}`
+	got, err := ParseClassification(withReasoning)
+	if err != nil {
+		t.Fatalf("ParseClassification: %v", err)
+	}
+	if len(got.Labels) != 1 {
+		t.Errorf("Labels: got %v", got.Labels)
+	}
+}
+
+func TestParseClassification_StripsMultipleThinkingBlocks(t *testing.T) {
+	multi := `<think>first</think> some prose <think>second</think> {"labels":["a"]}`
+	got, err := ParseClassification(multi)
+	if err != nil {
+		t.Fatalf("ParseClassification: %v", err)
+	}
+	if len(got.Labels) != 1 || got.Labels[0] != "a" {
+		t.Errorf("Labels: got %v", got.Labels)
+	}
+}
+
 func TestParseClassification_AcceptsEmptyArrays(t *testing.T) {
 	// LLM may legitimately return no labels if it can't classify.
 	got, err := ParseClassification(`{"labels":[],"collections":[],"confidence":0.1,"reasoning":"unclear"}`)

@@ -5,6 +5,7 @@ package llm
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -19,6 +20,17 @@ type ClassificationResult struct {
 	Reasoning   string   `json:"reasoning"`
 }
 
+// thinkingTagPattern matches reasoning blocks emitted by LLMs
+// before their final answer. Many reasoning models (DeepSeek R1,
+// OpenAI o1, and apparently the MiniMax backend the user is
+// pointed at) prepend <think>...</think> before the JSON. Some
+// use <reasoning>...</reasoning> instead.
+//
+// We strip these before the JSON parser even sees the response so
+// the error messages stay clean. The (?s) flag makes . match
+// newlines so multi-paragraph reasoning is handled.
+var thinkingTagPattern = regexp.MustCompile(`(?is)<\s*(?:think|reasoning|thought|antthinking)\s*[^>]*>.*?<\s*/\s*(?:think|reasoning|thought|antthinking)\s*>`)
+
 // ParseClassification decodes raw JSON content from the LLM into
 // a ClassificationResult, normalising the label names (lower-case,
 // trimmed, deduped) and clamping confidence to [0, 1] so a flaky
@@ -28,13 +40,20 @@ type ClassificationResult struct {
 // Collections names are trimmed and deduped but case is preserved —
 // they must match the names declared in config exactly.
 //
+// Reasoning-model prefixes (<think>...</think>, <reasoning>...)
+// are stripped before parsing so the JSON the model wants us to
+// see is what we actually decode.
+//
 // When the LLM response isn't valid JSON — most often because the
 // gateway returned an HTML error page or auth wall — we surface a
 // helpful hint that names the likely cause instead of a
 // cryptic json.UnmarshalSyntaxError.
 func ParseClassification(raw string) (ClassificationResult, error) {
+	stripped := thinkingTagPattern.ReplaceAllString(raw, "")
+	stripped = extractJSON(stripped)
+
 	var got ClassificationResult
-	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+	if err := json.Unmarshal([]byte(stripped), &got); err != nil {
 		return got, classifyParseError(raw, err)
 	}
 	got.Labels = normaliseLabels(got.Labels)
@@ -47,6 +66,63 @@ func ParseClassification(raw string) (ClassificationResult, error) {
 		got.Confidence = 1
 	}
 	return got, nil
+}
+
+// extractJSON returns the substring of s starting at the first
+// '{' (for an object) or '[' (for an array) and ending at the
+// matching closing brace. This makes the parser tolerant of:
+//   - leading prose ("Here's the JSON: {...}")
+//   - trailing commentary ("{...json...} let me know if you...")
+//   - prose between two reasoning blocks
+// If no JSON-looking content is found, s is returned unchanged.
+func extractJSON(s string) string {
+	start := strings.IndexAny(s, "{[")
+	if start < 0 {
+		return s
+	}
+	open, close := byte(s[start]), byte('}' /* placeholder */)
+	switch open {
+	case '{':
+		close = '}'
+	case '[':
+		close = ']'
+	}
+
+	// Walk forward, respecting quoted strings, until we find the
+	// matching close at depth 0.
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if c == '\\' && inString {
+			escaped = true
+			continue
+		}
+		if c == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		switch c {
+		case open:
+			depth++
+		case close:
+			depth--
+			if depth == 0 {
+				return s[start : i+1]
+			}
+		}
+	}
+	// Unbalanced — return from the first opener to the end and
+	// let the JSON parser surface the error.
+	return s[start:]
 }
 
 // classifyParseError converts a raw "is this JSON?" failure into a
