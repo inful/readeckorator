@@ -241,6 +241,32 @@ func TestBuildSystemPrompt_ExplainsAdditivePolicy(t *testing.T) {
 	}
 }
 
+func TestBuildSystemPrompt_MentionsMultilingualMatching(t *testing.T) {
+	// The classifier should be told to match inventory labels
+	// even when the article is in a different language — a
+	// Norwegian recipe should still match the English "cooking"
+	// label. This guidance was added after the user observed
+	// many non-English bookmarks returning low confidence.
+	prompt := BuildSystemPrompt(BuildSystemPromptInput{
+		ExistingLabels: []string{"cooking", "recipes"},
+	})
+	low := strings.ToLower(prompt)
+	if !strings.Contains(low, "language") {
+		t.Errorf("system prompt should mention language handling for cross-language matching")
+	}
+}
+
+func TestBuildSystemPrompt_MentionsLanguageEvenWithEmptyInventory(t *testing.T) {
+	// Multilingual guidance is independent of the inventory —
+	// the LLM needs the rule to know it should translate
+	// internally even when inventing new labels.
+	prompt := BuildSystemPrompt(BuildSystemPromptInput{})
+	low := strings.ToLower(prompt)
+	if !strings.Contains(low, "language") {
+		t.Errorf("system prompt should mention language handling even with empty inventory")
+	}
+}
+
 func TestBuildUserPrompt_IncludesAllFields(t *testing.T) {
 	prompt := BuildUserPrompt(UserPromptInput{
 		Title:       "Fine-tuning LLMs",

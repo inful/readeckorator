@@ -58,6 +58,11 @@ classifier:
 
 labels:
   # Optional bootstrap labels. The LLM may still create new ones at runtime.
+  # Tip: include labels in languages you actually read. The classifier
+  # matches across languages internally, but giving the LLM seeds
+  # in the article's source language raises confidence for non-English
+  # bookmarks. e.g. for Norwegian-heavy collections:
+  #   seed: [cooking, recipes, mat, oppskrift, technology, programmering]
   seed: []
 
 collections:

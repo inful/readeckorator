@@ -287,6 +287,9 @@ func BuildSystemPrompt(in BuildSystemPromptInput) string {
 		b.WriteString("There is no existing label inventory. Invent a short, lowercase, single-word (or kebab-case) label. Examples: `technology`, `cooking`, `world-news`.\n\n")
 	}
 
+	b.WriteString("## Cross-language matching\n\n")
+	b.WriteString("Articles may be written in any language. Translate the article's subject internally before matching: a Norwegian recipe article about pitabrød should still match the English `cooking` label, and a German Kubernetes article should still match `kubernetes`. When the inventory has a label that fits the *topic* regardless of language, use it. If the inventory is empty, the label you invent can be in any language but should still be a recognisable topic name.\n\n")
+
 	b.WriteString("## Policy\n\n")
 	b.WriteString("- Labels are lowercase, kebab-case when multi-word. Trim whitespace before emitting.\n")
 	b.WriteString("- Apply 1 to N labels where N is bounded by the configured maximum (default 5).\n")
