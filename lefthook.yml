@@ -1,30 +1,16 @@
-# lefthook configuration for readeckorator.
+# yaml-language-server: $schema=https://lefthook.dev/schema.json
 #
-# All gates block the commit unless they pass. No --no-verify escape
-# hatch: we want to know immediately if anything is broken.
+# Imports the shared lefthook configuration from github.com/inful/lefthooks.
+# Pin `ref` to a tag for reproducible builds.
 #
-# Conventional Commits are enforced by a pure-bash regex check on the
-# commit message via hack/commitlint.sh — no Node, no commitlint.
+# Hook behavior is defined in https://github.com/inful/lefthooks and
+# self-gates per-consumer via glob/skip conditions — no per-repo overrides
+# needed for the standard Go / Markdown / sqlc checks.
 
-min_version: 1.6.0
+min_version: 2.1.0
 
-pre-commit:
-  parallel: true
-  commands:
-    test:
-      glob: "*.go"
-      run: go test ./...
-    vet:
-      glob: "*.go"
-      run: go vet ./...
-    lint:
-      glob: "*.go"
-      run: golangci-lint run
-    sqlc:
-      glob: "*.sql"
-      run: if [ -f sqlc.yaml ]; then sqlc generate && git diff --exit-code -- internal/state/queries.sql.go internal/state/models.go || { echo "sqlc generated code is out of date — run 'make sqlc' and commit the result"; exit 1; }; else echo "sqlc.yaml not present — skipping"; fi
-
-commit-msg:
-  commands:
-    conventional:
-      run: hack/commitlint.sh {1}
+remotes:
+  - git_url: git@github.com:inful/lefthooks.git
+    ref: v0.1.1
+    configs:
+      - lefthook.yml
